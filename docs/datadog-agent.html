@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Datadog Agent - EKS Fargate</title>
+    <style>
+        :root { --dd-purple: #632CA6; --aws-orange: #FF9900; --k8s-blue: #326CE5; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 960px; margin: 0 auto; padding: 2rem; }
+        h1 { color: var(--dd-purple); border-bottom: 3px solid var(--dd-purple); padding-bottom: 0.5rem; margin-bottom: 1.5rem; }
+        h2 { color: #444; margin-top: 2rem; margin-bottom: 0.75rem; border-left: 4px solid var(--dd-purple); padding-left: 0.75rem; }
+        h3 { color: #555; margin-top: 1.5rem; margin-bottom: 0.5rem; }
+        p { margin-bottom: 1rem; }
+        pre { background: #1e1e2e; color: #cdd6f4; padding: 1rem; border-radius: 6px; overflow-x: auto; margin-bottom: 1rem; font-size: 0.85rem; }
+        code { background: #f0f0f0; padding: 0.15rem 0.4rem; border-radius: 3px; font-size: 0.9em; }
+        pre code { background: none; padding: 0; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 1.5rem; font-size: 0.9rem; }
+        th, td { border: 1px solid #ddd; padding: 0.5rem 0.75rem; text-align: left; }
+        th { background: #f5f0ff; color: var(--dd-purple); }
+        tr:nth-child(even) { background: #fafafa; }
+        .badge { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.75rem; font-weight: bold; color: #fff; margin-right: 0.3rem; }
+        .badge-dd { background: var(--dd-purple); }
+        .badge-aws { background: var(--aws-orange); }
+        .badge-k8s { background: var(--k8s-blue); }
+        .diagram { background: #f8f9fa; border: 1px solid #e0e0e0; border-radius: 6px; padding: 1.5rem; margin-bottom: 1.5rem; font-family: monospace; white-space: pre; font-size: 0.85rem; }
+        .note { background: #fff3cd; border-left: 4px solid #ffc107; padding: 0.75rem 1rem; margin-bottom: 1rem; border-radius: 0 4px 4px 0; }
+        ul { margin-bottom: 1rem; padding-left: 1.5rem; }
+        li { margin-bottom: 0.3rem; }
+    </style>
+</head>
+<body>
+    <h1>Datadog Agent — Configuração no EKS Fargate</h1>
+    <p>
+        <span class="badge badge-dd">Datadog</span>
+        <span class="badge badge-aws">AWS EKS Fargate</span>
+        <span class="badge badge-k8s">Kubernetes</span>
+    </p>
+
+    <h2>Visão Geral</h2>
+    <p>O agente Datadog roda como <strong>sidecar</strong> no mesmo pod da aplicação. Em EKS Fargate não há acesso ao nó subjacente, portanto o padrão DaemonSet não é suportado — o sidecar é a abordagem oficial da Datadog para esse ambiente.</p>
+
+    <div class="diagram">Pod: python-app
+├── python-tracing-app   → envia traces para localhost:8126 e métricas para localhost:8125
+└── datadog-agent        → recebe, agrega e envia dados para o backend Datadog</div>
+
+    <p>A aplicação aponta para o agente via variáveis de ambiente:</p>
+    <pre><code>DD_AGENT_HOST=localhost
+DD_TRACE_AGENT_PORT=8126</code></pre>
+
+    <h2>Processo de Instalação</h2>
+    <p>O agente é instalado automaticamente via Terraform como parte do <code>kubernetes_deployment</code> definido em <code>k8s.tf</code>.</p>
+
+    <h3>1. RBAC — Service Account e permissões</h3>
+    <p>Antes de subir o pod, o Terraform cria os recursos RBAC necessários:</p>
+    <pre><code>kubernetes_service_account  "datadog-agent"   (namespace: apps)
+kubernetes_cluster_role     "datadog-agent"   (regras de leitura no cluster)
+kubernetes_cluster_role_binding               (vincula SA ao ClusterRole)</code></pre>
+    <p>O <code>ClusterRole</code> concede <code>get</code>, <code>list</code> e <code>watch</code> sobre:</p>
+    <ul>
+        <li><code>nodes</code>, <code>pods</code>, <code>services</code>, <code>endpoints</code>, <code>events</code>, <code>namespaces</code>, <code>componentstatuses</code></li>
+        <li><code>deployments</code>, <code>replicasets</code>, <code>statefulsets</code>, <code>daemonsets</code></li>
+        <li><code>jobs</code>, <code>cronjobs</code></li>
+    </ul>
+
+    <h3>2. Deployment do sidecar</h3>
+    <p>O container <code>datadog-agent</code> é declarado dentro do mesmo <code>spec.template</code> do pod da aplicação:</p>
+    <pre><code>container {
+  name  = "datadog-agent"
+  image = "public.ecr.aws/datadog/agent:latest"
+
+  port { container_port = 8126; protocol = "TCP" }  # APM
+  port { container_port = 8125; protocol = "UDP" }  # DogStatsD
+}</code></pre>
+    <p>A chave de API é injetada via variável do Terraform (<code>var.dd_api_key</code>), nunca hardcoded.</p>
+
+    <h3>3. Autodiscovery via anotação</h3>
+    <p>O pod recebe a anotação que instrui o agente a coletar métricas do <code>kube-state-metrics</code>:</p>
+    <pre><code>"ad.datadoghq.com/datadog-agent.checks": {
+  "kubernetes_state": {
+    "init_config": {},
+    "instances": [{
+      "kube_state_url": "http://kube-state-metrics.kube-system.svc.cluster.local:8080/metrics",
+      "telemetry": true
+    }]
+  }
+}</code></pre>
+
+    <h3>4. Configuração específica para Fargate</h3>
+    <table>
+        <thead><tr><th>Variável</th><th>Valor</th><th>Por quê</th></tr></thead>
+        <tbody>
+            <tr><td><code>DD_EKS_FARGATE</code></td><td><code>true</code></td><td>Ativa o modo sem nó (nodeless)</td></tr>
+            <tr><td><code>DD_KUBERNETES_KUBELET_NODENAME</code></td><td><code>spec.nodeName</code> (fieldRef)</td><td>Identifica o nó virtual do Fargate via Downward API</td></tr>
+            <tr><td><code>DD_APM_NON_LOCAL_TRAFFIC</code></td><td><code>true</code></td><td>Necessário pois app e agente são processos distintos</td></tr>
+            <tr><td><code>DD_DOGSTATSD_NON_LOCAL_TRAFFIC</code></td><td><code>true</code></td><td>Idem para métricas StatsD</td></tr>
+        </tbody>
+    </table>
+
+    <h3>5. Unified Service Tagging</h3>
+    <p>As tags <code>env</code>, <code>service</code> e <code>version</code> são aplicadas tanto no container da aplicação quanto no do agente, garantindo correlação entre traces, logs e métricas:</p>
+    <pre><code># Aplicação e Agente (mesmo conjunto)
+DD_ENV     = "production"
+DD_SERVICE = "python-app"
+DD_VERSION = "1.0.0"</code></pre>
+
+    <h3>6. Ordem de criação (dependências Terraform)</h3>
+    <div class="diagram">aws_eks_fargate_profile
+        ↓
+kubernetes_namespace "apps"
+        ↓
+kubernetes_service_account + kubernetes_cluster_role
+        ↓
+kubernetes_cluster_role_binding
+        ↓
+kubernetes_deployment "python-app" (inclui sidecar datadog-agent)</div>
+
+    <h2>Variáveis de Ambiente do Agente</h2>
+    <table>
+        <thead><tr><th>Variável</th><th>Valor</th><th>Descrição</th></tr></thead>
+        <tbody>
+            <tr><td><code>DD_API_KEY</code></td><td><code>var.dd_api_key</code></td><td>Chave de API Datadog</td></tr>
+            <tr><td><code>DD_EKS_FARGATE</code></td><td><code>true</code></td><td>Habilita modo Fargate</td></tr>
+            <tr><td><code>DD_APM_ENABLED</code></td><td><code>true</code></td><td>Habilita coleta de traces (APM)</td></tr>
+            <tr><td><code>DD_APM_NON_LOCAL_TRAFFIC</code></td><td><code>true</code></td><td>Aceita traces de outros processos no pod</td></tr>
+            <tr><td><code>DD_LOGS_ENABLED</code></td><td><code>true</code></td><td>Habilita coleta de logs</td></tr>
+            <tr><td><code>DD_LOGS_CONFIG_CONTAINER_COLLECT_ALL</code></td><td><code>true</code></td><td>Coleta logs de todos os containers do pod</td></tr>
+            <tr><td><code>DD_DOGSTATSD_NON_LOCAL_TRAFFIC</code></td><td><code>true</code></td><td>Aceita métricas StatsD de outros processos</td></tr>
+            <tr><td><code>DD_PROCESS_AGENT_ENABLED</code></td><td><code>true</code></td><td>Habilita monitoramento de processos</td></tr>
+            <tr><td><code>DD_ORCHESTRATOR_EXPLORER_ENABLED</code></td><td><code>true</code></td><td>Habilita visibilidade de recursos Kubernetes</td></tr>
+            <tr><td><code>DD_COLLECT_KUBERNETES_EVENTS</code></td><td><code>true</code></td><td>Coleta eventos do cluster</td></tr>
+            <tr><td><code>DD_LEADER_ELECTION</code></td><td><code>true</code></td><td>Garante coleta única de eventos em múltiplas réplicas</td></tr>
+            <tr><td><code>DD_KUBERNETES_COLLECT_METADATA_TAGS</code></td><td><code>true</code></td><td>Enriquece dados com labels/anotações do pod</td></tr>
+            <tr><td><code>DD_KUBERNETES_POD_LABELS_AS_TAGS</code></td><td><code>{"app","version","env"}</code></td><td>Mapeia labels do pod como tags Datadog</td></tr>
+            <tr><td><code>DD_CLUSTER_NAME</code></td><td><code>var.cluster_name</code></td><td>Nome do cluster para identificação</td></tr>
+            <tr><td><code>DD_ENV</code> / <code>DD_SERVICE</code> / <code>DD_VERSION</code></td><td><code>production</code> / <code>python-app</code> / <code>1.0.0</code></td><td>Unified Service Tagging</td></tr>
+        </tbody>
+    </table>
+
+    <h2>Portas Expostas</h2>
+    <table>
+        <thead><tr><th>Porta</th><th>Protocolo</th><th>Uso</th></tr></thead>
+        <tbody>
+            <tr><td><code>8126</code></td><td>TCP</td><td>APM — recebe traces da aplicação</td></tr>
+            <tr><td><code>8125</code></td><td>UDP</td><td>DogStatsD — recebe métricas customizadas</td></tr>
+        </tbody>
+    </table>
+
+    <h2>RBAC</h2>
+    <p>O agente usa um <code>ServiceAccount</code> dedicado (<code>datadog-agent</code>) vinculado a um <code>ClusterRole</code> com permissão de leitura (<code>get</code>, <code>list</code>, <code>watch</code>) sobre:</p>
+    <ul>
+        <li><code>nodes</code>, <code>pods</code>, <code>services</code>, <code>endpoints</code>, <code>events</code>, <code>namespaces</code></li>
+        <li><code>deployments</code>, <code>replicasets</code>, <code>statefulsets</code>, <code>daemonsets</code></li>
+        <li><code>jobs</code>, <code>cronjobs</code></li>
+    </ul>
+
+    <h2>Imagem Utilizada</h2>
+    <pre><code>public.ecr.aws/datadog/agent:latest</code></pre>
+    <div class="note">
+        <strong>Nota:</strong> Para ambientes de produção, fixe uma versão específica (ex: <code>public.ecr.aws/datadog/agent:7</code>) para evitar atualizações não controladas.
+    </div>
+</body>
+</html>

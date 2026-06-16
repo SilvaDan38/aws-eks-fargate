@@ -96,6 +96,38 @@ resource "aws_eks_fargate_profile" "fp_datadog_lab" {
   }
 }
 
+resource "aws_eks_fargate_profile" "fp_kube_system" {
+  cluster_name           = aws_eks_cluster.this.name
+  fargate_profile_name   = "fp-kube-system"
+  pod_execution_role_arn = aws_iam_role.fargate_execution.arn
+  subnet_ids             = aws_subnet.private[*].id
+
+  selector {
+    namespace = "kube-system"
+    labels = {
+      "k8s-app" = "kube-dns"
+    }
+  }
+
+  selector {
+    namespace = "kube-system"
+    labels = {
+      "app.kubernetes.io/name" = "kube-state-metrics"
+    }
+  }
+}
+
+resource "aws_eks_fargate_profile" "fp_datadog" {
+  cluster_name           = aws_eks_cluster.this.name
+  fargate_profile_name   = "fp-datadog"
+  pod_execution_role_arn = aws_iam_role.fargate_execution.arn
+  subnet_ids             = aws_subnet.private[*].id
+
+  selector {
+    namespace = "datadog"
+  }
+}
+
 # --- OIDC Provider ---
 data "tls_certificate" "eks_oidc" {
   url = aws_eks_cluster.this.identity[0].oidc[0].issuer

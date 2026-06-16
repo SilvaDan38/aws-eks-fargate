@@ -112,7 +112,7 @@ O container `datadog-agent` é declarado dentro do mesmo `spec.template` do pod 
 ```hcl
 container {
   name  = "datadog-agent"
-  image = "gcr.io/datadog/agent:latest"
+  image = "public.ecr.aws/datadog/agent:latest"
 
   port { container_port = 8126; protocol = "TCP" }  # APM
   port { container_port = 8125; protocol = "UDP" }  # DogStatsD
@@ -216,10 +216,10 @@ O agente usa um `ServiceAccount` dedicado (`datadog-agent`) vinculado a um `Clus
 ### Imagem utilizada
 
 ```
-gcr.io/datadog/agent:latest
+public.ecr.aws/datadog/agent:latest
 ```
 
-> Para ambientes de produção, fixe uma versão específica (ex: `gcr.io/datadog/agent:7`) para evitar atualizações não controladas.
+> Para ambientes de produção, fixe uma versão específica (ex: `public.ecr.aws/datadog/agent:7`) para evitar atualizações não controladas.
 
 ## Providers
 

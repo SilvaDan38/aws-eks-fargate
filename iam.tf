@@ -38,3 +38,8 @@ resource "aws_iam_role_policy_attachment" "fargate_execution_policy" {
   role       = aws_iam_role.fargate_execution.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSFargatePodExecutionRolePolicy"
 }
+
+resource "aws_iam_role_policy_attachment" "fargate_ecr_policy" {
+  role       = aws_iam_role.fargate_execution.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+}

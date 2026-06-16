@@ -18,3 +18,13 @@ override.tf.json
 # OS
 .DS_Store
 Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Kubeconfig
+kubeconfig
+*.kubeconfig

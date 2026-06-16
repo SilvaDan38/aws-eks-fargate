@@ -19,6 +19,11 @@ resource "kubernetes_cluster_role" "datadog_agent" {
     verbs      = ["get", "list", "watch"]
   }
   rule {
+    api_groups = [""]
+    resources  = ["nodes/proxy", "nodes/stats", "nodes/metrics"]
+    verbs      = ["get"]
+  }
+  rule {
     api_groups = ["apps"]
     resources  = ["deployments", "replicasets", "statefulsets", "daemonsets"]
     verbs      = ["get", "list", "watch"]
@@ -72,16 +77,25 @@ resource "kubernetes_deployment" "app" {
               }]
             }
           })
+          "ad.datadoghq.com/python-app.logs" = jsonencode([{
+            source  = "python"
+            service = "python-app"
+          }])
         }
       }
 
       spec {
         service_account_name = kubernetes_service_account.datadog_agent.metadata[0].name
 
+        volume {
+          name = "agent-run"
+          empty_dir {}
+        }
+
         # ── App container ──────────────────────────────────────────────────────
         container {
           name  = "python-app"
-          image = "python-tracing-app:latest"
+          image = "987615086900.dkr.ecr.us-east-1.amazonaws.com/python-tracing-app:latest"
 
           env {
             name  = "DD_AGENT_HOST"
@@ -107,16 +121,24 @@ resource "kubernetes_deployment" "app" {
             name  = "DD_TRACE_SAMPLE_RATE"
             value = "1.0"
           }
+          env {
+            name  = "DD_LOGS_INJECTION"
+            value = "true"
+          }
         }
 
         # ── Datadog Agent sidecar ──────────────────────────────────────────────
         container {
           name  = "datadog-agent"
-          image = "gcr.io/datadog/agent:latest"
+          image = "public.ecr.aws/datadog/agent:latest"
 
           env {
             name  = "DD_API_KEY"
             value = var.dd_api_key
+          }
+          env {
+            name  = "DD_SITE"
+            value = "datadoghq.com"
           }
           env {
             name  = "DD_EKS_FARGATE"
@@ -145,6 +167,18 @@ resource "kubernetes_deployment" "app" {
           env {
             name  = "DD_CLUSTER_NAME"
             value = var.cluster_name
+          }
+          env {
+            name  = "DD_CLUSTER_AGENT_ENABLED"
+            value = "true"
+          }
+          env {
+            name  = "DD_CLUSTER_AGENT_AUTH_TOKEN"
+            value = "wIQOziFv7lNG3WhaUpikhotEH4x4uWwX"
+          }
+          env {
+            name  = "DD_CLUSTER_AGENT_URL"
+            value = "https://datadog-agent-cluster-agent.datadog.svc.cluster.local:5005"
           }
           env {
             name = "DD_KUBERNETES_KUBELET_NODENAME"
@@ -185,6 +219,14 @@ resource "kubernetes_deployment" "app" {
             value = "true"
           }
           env {
+            name  = "DD_LOGS_CONFIG_K8S_CONTAINER_USE_KUBELET_API"
+            value = "true"
+          }
+          env {
+            name  = "DD_LOGS_CONFIG_RUN_PATH"
+            value = "/opt/datadog-agent/run"
+          }
+          env {
             name  = "DD_DOGSTATSD_NON_LOCAL_TRAFFIC"
             value = "true"
           }
@@ -200,6 +242,11 @@ resource "kubernetes_deployment" "app" {
           port {
             container_port = 8125
             protocol       = "UDP"
+          }
+
+          volume_mount {
+            name       = "agent-run"
+            mount_path = "/opt/datadog-agent/run"
           }
         }
       }
