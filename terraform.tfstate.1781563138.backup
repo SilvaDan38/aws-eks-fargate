@@ -1461,7 +1461,7 @@
                             "env": [
                               {
                                 "name": "DD_API_KEY",
-                                "value": "51aaa418627a95c2be45e9ad1487dc51",
+                                "value": "",
                                 "value_from": []
                               },
                               {
